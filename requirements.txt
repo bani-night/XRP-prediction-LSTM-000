@@ -1,0 +1,11 @@
+torch>=2.1.0
+pytorch-forecasting>=1.0.0
+optuna>=3.4.0
+PyWavelets>=1.4.0
+TA-Lib>=0.4.0
+deap>=1.4.0
+networkx>=3.0
+ccxt>=4.1.0
+python-binance>=1.0.0
+numba>=0.58.0
+redis>=5.0.0
