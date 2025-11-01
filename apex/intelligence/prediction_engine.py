@@ -1,117 +1,121 @@
 import torch
 from torch.utils.data import DataLoader
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
-from typing import Dict, Any, List
+from pytorch_forecasting.data import GroupNormalizer
+from pytorch_forecasting.metrics import QuantileLoss
 import pandas as pd
 import numpy as np
+from typing import Dict, Any, List
+import lightning.pytorch as pl
 
 class UniversalPredictor:
     """
-    Single adaptive architecture that morphs:
-
-    Base: Temporal Fusion Transformer
-    - Multi-horizon prediction
-    - Variable selection network
-    - Interpretable attention
-
-    Evolution: Architecture search finds optimal:
-    - Layer depths
-    - Attention heads
-    - Feature combinations
-    - Loss functions
+    Single adaptive architecture based on the Temporal Fusion Transformer.
     """
 
-    def __init__(self, config: Dict[str, Any], training_parameters: Dict[str, Any]):
-        """
-        Initializes the UniversalPredictor.
-
-        Args:
-            config: A dictionary containing the model configuration.
-        """
-        self.config = config
+    def __init__(self, training_parameters: Dict[str, Any], max_prediction_length: int, max_encoder_length: int):
         self.training_parameters = training_parameters
-        self.model = self._create_model()
+        self.max_prediction_length = max_prediction_length
+        self.max_encoder_length = max_encoder_length
+        self.model = None
 
-    def _create_model(self) -> TemporalFusionTransformer:
+    def create_dataset(self, data: pd.DataFrame) -> TimeSeriesDataSet:
         """
-        Creates a Temporal Fusion Transformer model from the configuration.
+        Creates a TimeSeriesDataSet for the Temporal Fusion Transformer.
         """
-        # This is a simplified example. A real implementation would require a TimeSeriesDataSet
-        # to define the structure of the data.
-
-        # Create a dummy TimeSeriesDataSet to initialize the model
-        dummy_data = pd.DataFrame({
-            "time_idx": np.arange(100),
-            "target": np.random.randn(100),
-            "group": ["a"] * 100,
-            "feature": np.random.randn(100)
-        })
-
-        dummy_dataset = TimeSeriesDataSet(
-            dummy_data,
+        return TimeSeriesDataSet(
+            data,
             time_idx="time_idx",
             target="target",
             group_ids=["group"],
-            max_encoder_length=60,
-            max_prediction_length=20,
+            max_encoder_length=self.max_encoder_length,
+            max_prediction_length=self.max_prediction_length,
             static_categoricals=["group"],
             time_varying_known_reals=["time_idx"],
-            time_varying_unknown_reals=["target", "feature"],
+            time_varying_unknown_reals= [col for col in data.columns if col not in ['time_idx', 'target', 'group']],
+            target_normalizer=GroupNormalizer(groups=["group"], transformation="softplus"),
         )
 
-        return TemporalFusionTransformer.from_dataset(
-            dummy_dataset,
-            **self.training_parameters
+    def train(self, train_data: pd.DataFrame):
+        """
+        Trains the Temporal Fusion Transformer model.
+        """
+        training_dataset = self.create_dataset(train_data)
+
+        # Create a dataloader for training
+        train_dataloader = training_dataset.to_dataloader(train=True, batch_size=64, num_workers=4)
+
+        # Initialize the trainer
+        trainer = pl.Trainer(
+            max_epochs=2, # Keep it short for this example
+            accelerator="cpu",
+            gradient_clip_val=0.1,
+            limit_train_batches=50,
+            enable_checkpointing=False,
+            logger=False,
+            callbacks=[],
         )
 
-    def train(self, data: pd.DataFrame):
-        """
-        Trains the model on the given data.
+        # Initialize the model
+        self.model = TemporalFusionTransformer.from_dataset(
+            training_dataset,
+            **self.training_parameters,
+        )
 
-        Placeholder implementation.
-        """
-        print(f"Training the model on data with shape {data.shape}")
-        # In a real implementation, you would convert the pandas DataFrame
-        # to a TimeSeriesDataSet and then use a PyTorch Lightning Trainer.
-        pass
+        # Fit the model
+        trainer.fit(self.model, train_dataloader)
 
     def predict(self, data: pd.DataFrame) -> np.ndarray:
         """
-        Makes predictions on the given data.
-
-        Placeholder implementation.
+        Makes predictions on new data.
         """
-        print(f"Making predictions on data with shape {data.shape}")
-        # In a real implementation, you would use the trained model
-        # to make predictions on new data.
-        return np.random.rand(self.config.get('prediction_length', 20))
+        if self.model is None:
+            raise RuntimeError("Model has not been trained yet. Call train() first.")
+
+        # Create a dataloader for prediction
+        prediction_dataset = self.create_dataset(data)
+        predict_dataloader = prediction_dataset.to_dataloader(train=False, batch_size=64, num_workers=4)
+
+        # Make predictions
+        raw_predictions = self.model.predict(predict_dataloader)
+        return raw_predictions[0].numpy() # Return predictions for the first batch
 
 if __name__ == '__main__':
-    mock_config = {
-        'prediction_length': 20
-    }
-
     # These would typically come from genesis.yaml or be determined by NAS
     mock_training_params = {
-        "learning_rate": 0.03,
-        "hidden_size": 16,
-        "attention_head_size": 1,
-        "dropout": 0.1,
-        "hidden_continuous_size": 8,
+        "learning_rate": 0.01, "hidden_size": 32, "attention_head_size": 2,
+        "dropout": 0.15, "hidden_continuous_size": 16,
     }
 
-    predictor = UniversalPredictor(config=mock_config, training_parameters=mock_training_params)
+    predictor = UniversalPredictor(
+        training_parameters=mock_training_params,
+        max_prediction_length=20,
+        max_encoder_length=60
+    )
 
-    # Create some mock market data
+    # Create mock market data for training and prediction
+    # Ensure there's enough data for at least one full sequence
+    data_size = 200
     mock_data = pd.DataFrame({
-        'time_idx': np.arange(200),
-        'target': np.random.randn(200),
-        'group': ['a'] * 200,
-        'feature': np.random.randn(200)
+        'time_idx': np.arange(data_size),
+        'target': np.random.randn(data_size),
+        'group': ['stock_A'] * data_size,
+        'feature1': np.random.randn(data_size),
+        'feature2': np.random.randn(data_size)
     })
 
+    # Train the model
+    print("Training the model...")
     predictor.train(mock_data)
-    predictions = predictor.predict(mock_data)
+    print("Training complete.")
 
-    print(f"\nModel created: {type(predictor.model)}")
-    print(f"Predictions generated with shape: {predictions.shape}")
+    # Make predictions on the last sequence of the training data
+    # The encoder data should be the last `max_encoder_length` time steps
+    encoder_data = mock_data.iloc[-predictor.max_encoder_length:]
+
+    print("\nMaking predictions...")
+    predictions = predictor.predict(mock_data) # predict on the full data
+    print("Predictions generated.")
+
+    print(f"\nModel: {type(predictor.model)}")
+    print(f"Prediction shape: {predictions.shape}")

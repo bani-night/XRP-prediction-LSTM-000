@@ -4,57 +4,69 @@ import random
 
 class RealityValidator:
     """
-    Validates predictions against real market outcomes.
-    - Paper trading validation
-    - Live market testing
-    - Slippage and cost modeling
+    Validates predictions against real market outcomes by simulating trades.
     """
 
     def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.transaction_cost_pct = self.config.get('risk', {}).get('transaction_cost_pct', 0.001)
+
+    def validate_prediction(self, prediction: Dict[str, Any], market_data: pd.DataFrame) -> Dict[str, Any]:
         """
-        Initializes the RealityValidator.
+        Validates a prediction by simulating a trade on the market data.
 
         Args:
-            config: A dictionary containing configuration for validation.
+            prediction: A dictionary containing the prediction details (e.g., direction).
+            market_data: A DataFrame with at least two rows of market data to simulate a trade.
         """
-        self.config = config
+        if len(market_data) < 2:
+            return {'is_correct': False, 'profit_loss_pct': 0, 'reason': 'Not enough data to validate.'}
 
-    def validate_prediction(self, prediction: Any, market_data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Validates a prediction against market data.
+        entry_price = market_data['close'].iloc[-2]
+        exit_price = market_data['close'].iloc[-1]
 
-        Placeholder implementation.
-        """
-        print(f"Validating prediction against market data.")
+        # Simulate trade based on prediction
+        # For simplicity, we assume a 'BULLISH' prediction means we buy and hold for one tick.
+        if prediction.get('direction') == 'BULLISH':
+            profit_loss = (exit_price - entry_price) - (entry_price * self.transaction_cost_pct)
+        elif prediction.get('direction') == 'BEARISH': # Assuming short sell
+            profit_loss = (entry_price - exit_price) - (entry_price * self.transaction_cost_pct)
+        else: # NEUTRAL or unknown
+            profit_loss = 0
 
-        # In a real implementation, you would:
-        # 1. Simulate the execution of the trade based on the prediction.
-        # 2. Account for slippage and transaction costs.
-        # 3. Compare the outcome with the prediction.
+        profit_loss_pct = (profit_loss / entry_price) * 100
+        is_correct = profit_loss > 0
 
         return {
-            'is_correct': random.choice([True, False]),
-            'profit_loss': random.uniform(-1.5, 1.5),
-            'slippage': random.uniform(0.01, 0.05)
+            'is_correct': is_correct,
+            'profit_loss_pct': profit_loss_pct,
         }
 
 if __name__ == '__main__':
-    import random
-
     mock_config = {
-        'risk': {
-            'slippage_rate': 0.02
-        }
+        'risk': {'transaction_cost_pct': 0.001}
     }
 
     validator = RealityValidator(config=mock_config)
 
-    # Mock a prediction and market data
-    mock_prediction = {'direction': 'BULLISH', 'confidence': 0.8}
-    mock_market_data = pd.DataFrame({'close': [100.0, 101.5]})
+    # Mock a bullish prediction and market data where the price goes up
+    bullish_prediction = {'direction': 'BULLISH'}
+    market_up_data = pd.DataFrame({'close': [100.0, 101.5]})
 
-    validation_result = validator.validate_prediction(mock_prediction, mock_market_data)
+    bullish_result = validator.validate_prediction(bullish_prediction, market_up_data)
+    print("Validation for a correct BULLISH prediction:")
+    print(bullish_result)
 
-    print("Validation Result:")
-    for key, value in validation_result.items():
-        print(f"  {key}: {value}")
+    # Mock a bearish prediction and market data where the price goes down
+    bearish_prediction = {'direction': 'BEARISH'}
+    market_down_data = pd.DataFrame({'close': [100.0, 98.5]})
+
+    bearish_result = validator.validate_prediction(bearish_prediction, market_down_data)
+    print("\nValidation for a correct BEARISH prediction:")
+    print(bearish_result)
+
+    # Mock a bullish prediction where the price goes down
+    market_down_data_for_bullish = pd.DataFrame({'close': [100.0, 99.0]})
+    incorrect_bullish_result = validator.validate_prediction(bullish_prediction, market_down_data_for_bullish)
+    print("\nValidation for an incorrect BULLISH prediction:")
+    print(incorrect_bullish_result)
