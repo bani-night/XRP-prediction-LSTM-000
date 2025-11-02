@@ -2,10 +2,9 @@ import time
 import yaml
 import pandas as pd
 import numpy as np
+import json
 from typing import Dict, Any
 import logging
-import sys
-import os
 
 from apex.core.brain import BrainEvolution
 from apex.core.evolution import StrategyEvolution
@@ -15,16 +14,13 @@ from apex.reality.market_stream import MarketStream
 from apex.reality.validator import RealityValidator
 from apex.evolution.self_modifier import SelfModifier
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ApexSystem:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-
-        # Initialize components
         self.market_stream = MarketStream(config=config.get('reality', {}))
-        initial_data = next(self.market_stream.get_live_data())
+        initial_data = self._get_initial_data()
 
         self.pattern_dna = PatternDNA(config=config.get('intelligence', {}).get('patterns', {}))
         self.pattern_dna._add_technical_indicators(initial_data)
@@ -32,76 +28,79 @@ class ApexSystem:
         self.brain_evolution = BrainEvolution(config=config.get('intelligence', {}).get('brain', {}), historical_data=initial_data)
         self.strategy_evolution = StrategyEvolution(config=config.get('intelligence', {}).get('strategies', {}), historical_data=initial_data)
 
-        # Evolve and initialize the prediction model
         self._initialize_predictor(initial_data)
 
         self.validator = RealityValidator(config=config.get('reality', {}))
         self.self_modifier = SelfModifier(config=config.get('evolution', {}))
 
+    def _get_initial_data(self) -> pd.DataFrame:
+        return next(self.market_stream.get_live_data())
+
     def _initialize_predictor(self, historical_data: pd.DataFrame):
-        """Evolves the architecture and trains the initial model."""
-        logging.info("Performing initial brain evolution to find optimal architecture...")
+        logging.info("Initializing predictor...")
         best_params = self.brain_evolution.evolve_architecture()
-        logging.info(f"Best initial params found: {best_params}")
-
-        self.predictor = UniversalPredictor(
-            training_parameters=best_params,
-            max_prediction_length=20, max_encoder_length=60
-        )
-
-        logging.info("Training the initial prediction model...")
+        logging.info(f"Best initial params: {best_params}")
+        self.predictor = UniversalPredictor(training_parameters=best_params, max_prediction_length=20, max_encoder_length=60)
         train_df = self._prepare_data_for_predictor(historical_data)
         self.predictor.train(train_df)
         logging.info("Initial model training complete.")
 
     def run_evolution_loop(self):
-        logging.info("Starting APEX Prediction System main loop...")
+        logging.info("Starting APEX main loop...")
         data_generator = self.market_stream.get_live_data()
+
+        max_cycles = self.config.get('execution', {}).get('max_cycles', 0)
+        save_freq = self.config.get('execution', {}).get('save_state_frequency', 0)
 
         for i, market_data in enumerate(data_generator):
             logging.info(f"--- Cycle {i + 1} ---")
 
             try:
-                # 1. Feature Engineering
+                # 1. Feature Engineering and Prediction
                 intelligence = self.pattern_dna.extract_intelligence(market_data.copy())
-                logging.info(f"Market Regime: {intelligence['market_regime']}")
-
-                # 2. Prediction
                 prediction_data = self._prepare_data_for_predictor(intelligence['features'])
                 prediction = self.predictor.predict(prediction_data)
+                pred_direction = 'BULLISH' if np.mean(prediction) > prediction_data['target'].iloc[-1] else 'BEARISH'
+                logging.info(f"Model Prediction: {pred_direction}")
 
-                # Simple prediction logic
-                last_known_price = prediction_data['target'].iloc[-1]
-                pred_direction = 'BULLISH' if np.mean(prediction) > last_known_price else 'BEARISH'
-                logging.info(f"Prediction: {pred_direction}")
-
-                # 3. Validation
-                validation_result = self.validator.validate_prediction({'direction': pred_direction}, market_data)
-                logging.info(f"Validation: Correct={validation_result['is_correct']}, P/L %={validation_result.get('profit_loss_pct', 0):.4f}")
-
-                # 4. Strategy Evolution
-                self.strategy_evolution.evolve()
+                # 2. Strategy Evolution (now using the prediction)
+                self.strategy_evolution.evolve(prediction=pred_direction)
                 logging.info(f"Strategies evolved. Best fitness: {self.strategy_evolution.population[0].fitness:.2f}")
 
-            except Exception as e:
-                logging.error(f"An error occurred in cycle {i+1}: {e}", exc_info=True)
+                # 3. Validation (of the top strategy)
+                top_strategy = self.strategy_evolution.population[0]
+                # This validation is simplistic. A more robust validation would run the top strategy
+                # on the latest data and see if it's profitable.
+                logging.info(f"Top strategy uses model prediction: {top_strategy.dna.get('use_model_prediction')}")
 
-            if self.config.get('max_cycles') and i >= self.config['max_cycles'] - 1:
-                logging.info("Maximum cycles reached. Shutting down.")
+
+                # 4. State Saving
+                if save_freq > 0 and (i + 1) % save_freq == 0:
+                    self._save_state()
+
+            except Exception as e:
+                logging.error(f"Error in cycle {i+1}: {e}", exc_info=True)
+
+            if max_cycles > 0 and i >= max_cycles - 1:
+                logging.info("Max cycles reached. Shutting down.")
                 break
 
+    def _save_state(self):
+        logging.info("Saving best strategies...")
+        best_strategies = [genome.dna for genome in self.strategy_evolution.population[:5]]
+        with open("best_strategies.json", "w") as f:
+            json.dump(best_strategies, f, indent=4)
+
     def _prepare_data_for_predictor(self, df: pd.DataFrame) -> pd.DataFrame:
-        predictor_df = df.copy()
-        predictor_df['time_idx'] = np.arange(len(predictor_df))
-        predictor_df['group'] = 'live_data'
-        predictor_df['target'] = predictor_df['close']
-        return predictor_df
+        df['time_idx'] = np.arange(len(df))
+        df['group'] = 'live_data'
+        df['target'] = df['close']
+        return df
 
 def main():
     try:
         with open('apex/config/genesis.yaml', 'r') as f:
             config = yaml.safe_load(f)
-            config['max_cycles'] = 5 # Add a max cycles limit for the example run
     except FileNotFoundError:
         logging.error("genesis.yaml not found.")
         exit(1)

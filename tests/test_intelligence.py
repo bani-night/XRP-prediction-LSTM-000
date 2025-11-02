@@ -18,7 +18,7 @@ class TestIntelligenceCore(unittest.TestCase):
         """Test the output structure of PatternDNA's extract_intelligence."""
         mock_config = {'wavelet_levels': [1, 2, 4]}
         pattern_dna = PatternDNA(config=mock_config)
-        mock_data = pd.DataFrame({'close': np.random.rand(100)})
+        mock_data = pd.DataFrame({'close': np.random.rand(100), 'high': np.random.rand(100), 'low': np.random.rand(100)})
         intelligence = pattern_dna.extract_intelligence(mock_data)
         self.assertIn('features', intelligence)
         self.assertIn('wavelet_features', intelligence)
@@ -44,9 +44,10 @@ class TestIntelligenceCore(unittest.TestCase):
         mock_config = {'generations': 5}
         mock_data = pd.DataFrame({
             'time_idx': np.arange(100), 'target': np.random.rand(100),
-            'group': ['a'] * 100, 'feature1': np.random.rand(100)
+            'group': ['a'] * 100, 'feature1': np.random.rand(100),
+            'close': np.random.rand(100), 'high': np.random.rand(100), 'low': np.random.rand(100)
         })
-        brain_evolution = BrainEvolution(config=mock_config, validation_data=mock_data)
+        brain_evolution = BrainEvolution(config=mock_config, historical_data=mock_data)
         self.assertIsInstance(brain_evolution, BrainEvolution)
 
 if __name__ == '__main__':
