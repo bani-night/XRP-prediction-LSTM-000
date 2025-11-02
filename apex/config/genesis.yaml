@@ -3,15 +3,15 @@
 intelligence:
   brain:
     architecture_search:
-      population_size: 20
-      generations: 10
+      population_size: 10 # Reduced for faster startup
+      generations: 5      # Reduced for faster startup
       mutation_rate: 0.15
     base_model: "temporal_fusion_transformer"
     evolution_frequency: "daily"
 
   patterns:
-    wavelet_levels: [1, 2, 4, 8, 16]
-    attention_heads: 8
+    wavelet_levels: [1, 2, 4]
+    attention_heads: 4
     regime_detection: true
     technical_indicators:
       rsi: { enabled: true, window: 14 }
@@ -21,7 +21,6 @@ intelligence:
       adx: { enabled: true, window: 14 }
 
   strategies:
-    genome_length: 12
     population: 50
     elite_percentage: 0.2
     mutation_rate: 0.1
@@ -38,9 +37,7 @@ reality:
 
 evolution:
   self_modification:
-    enabled: false # Disabled for now to focus on core logic
-    safety_checks: true
-    sandbox_testing: true
+    enabled: false
   performance_threshold: 0.02
   knowledge_retention:
     max_memory: "10000_predictions"
@@ -50,5 +47,6 @@ execution:
   mode: "terminal"
   verbosity: "intelligent"
   update_frequency: "real_time"
-  max_cycles: 100 # Max number of cycles to run (0 for infinite)
-  save_state_frequency: 25 # Save state every 25 cycles
+  max_cycles: 500
+  save_state_frequency: 100
+  retrain_frequency: 25 # Retrain the model every 25 cycles

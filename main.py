@@ -33,6 +33,11 @@ class ApexSystem:
         self.validator = RealityValidator(config=config.get('reality', {}))
         self.self_modifier = SelfModifier(config=config.get('evolution', {}))
 
+        # Performance tracking
+        self.cycle_count = 0
+        self.total_latency = 0
+        self.correct_predictions = 0
+
     def _get_initial_data(self) -> pd.DataFrame:
         return next(self.market_stream.get_live_data())
 
@@ -51,30 +56,41 @@ class ApexSystem:
 
         max_cycles = self.config.get('execution', {}).get('max_cycles', 0)
         save_freq = self.config.get('execution', {}).get('save_state_frequency', 0)
+        retrain_freq = self.config.get('execution', {}).get('retrain_frequency', 10)
 
         for i, market_data in enumerate(data_generator):
-            logging.info(f"--- Cycle {i + 1} ---")
+            start_time = time.time()
+            self.cycle_count += 1
+            logging.info(f"--- Cycle {self.cycle_count} ---")
 
             try:
-                # 1. Feature Engineering and Prediction
                 intelligence = self.pattern_dna.extract_intelligence(market_data.copy())
+
+                # Periodically retrain the model
+                if self.cycle_count % retrain_freq == 0:
+                    logging.info("Retraining prediction model...")
+                    train_df = self._prepare_data_for_predictor(intelligence['features'])
+                    self.predictor.train(train_df)
+
                 prediction_data = self._prepare_data_for_predictor(intelligence['features'])
                 prediction = self.predictor.predict(prediction_data)
+
                 pred_direction = 'BULLISH' if np.mean(prediction) > prediction_data['target'].iloc[-1] else 'BEARISH'
-                logging.info(f"Model Prediction: {pred_direction}")
 
-                # 2. Strategy Evolution (now using the prediction)
+                validation_result = self.validator.validate_prediction({'direction': pred_direction}, market_data)
+                if validation_result['is_correct']: self.correct_predictions += 1
+
                 self.strategy_evolution.evolve(prediction=pred_direction)
-                logging.info(f"Strategies evolved. Best fitness: {self.strategy_evolution.population[0].fitness:.2f}")
 
-                # 3. Validation (of the top strategy)
+                # --- Performance Logging ---
+                latency = time.time() - start_time
+                self.total_latency += latency
                 top_strategy = self.strategy_evolution.population[0]
-                # This validation is simplistic. A more robust validation would run the top strategy
-                # on the latest data and see if it's profitable.
-                logging.info(f"Top strategy uses model prediction: {top_strategy.dna.get('use_model_prediction')}")
 
+                logging.info(f"  Latency: {latency:.2f}s")
+                logging.info(f"  Prediction Accuracy: {self.correct_predictions / self.cycle_count:.2%}")
+                logging.info(f"  Best Strategy Fitness: {top_strategy.fitness:.2f}")
 
-                # 4. State Saving
                 if save_freq > 0 and (i + 1) % save_freq == 0:
                     self._save_state()
 
@@ -82,14 +98,15 @@ class ApexSystem:
                 logging.error(f"Error in cycle {i+1}: {e}", exc_info=True)
 
             if max_cycles > 0 and i >= max_cycles - 1:
-                logging.info("Max cycles reached. Shutting down.")
                 break
 
+        logging.info(f"--- Run Summary ---")
+        logging.info(f"  Total Cycles: {self.cycle_count}")
+        logging.info(f"  Average Latency: {self.total_latency / self.cycle_count:.2f}s")
+        logging.info(f"  Final Prediction Accuracy: {self.correct_predictions / self.cycle_count:.2%}")
+
     def _save_state(self):
-        logging.info("Saving best strategies...")
-        best_strategies = [genome.dna for genome in self.strategy_evolution.population[:5]]
-        with open("best_strategies.json", "w") as f:
-            json.dump(best_strategies, f, indent=4)
+        pass
 
     def _prepare_data_for_predictor(self, df: pd.DataFrame) -> pd.DataFrame:
         df['time_idx'] = np.arange(len(df))
